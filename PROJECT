@@ -1,3 +1,7 @@
-version: "2"
 domain: rabbitmq.com
 repo: github.com/rabbitmq/cluster-operator
+resources:
+- group: rabbitmq.com
+  kind: RabbitmqCluster
+  version: v2
+version: "2"

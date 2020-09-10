@@ -1,0 +1,52 @@
+
+---
+apiVersion: admissionregistration.k8s.io/v1beta1
+kind: MutatingWebhookConfiguration
+metadata:
+  creationTimestamp: null
+  name: mutating-webhook-configuration
+webhooks:
+- clientConfig:
+    caBundle: Cg==
+    service:
+      name: webhook-service
+      namespace: system
+      path: /mutate-rabbitmq-com-rabbitmq-com-v1beta1-rabbitmqcluster
+  failurePolicy: Fail
+  name: mrabbitmqcluster.kb.io
+  rules:
+  - apiGroups:
+    - rabbitmq.com.rabbitmq.com
+    apiVersions:
+    - v1beta1
+    operations:
+    - CREATE
+    - UPDATE
+    resources:
+    - rabbitmqclusters
+
+---
+apiVersion: admissionregistration.k8s.io/v1beta1
+kind: ValidatingWebhookConfiguration
+metadata:
+  creationTimestamp: null
+  name: validating-webhook-configuration
+webhooks:
+- clientConfig:
+    caBundle: Cg==
+    service:
+      name: webhook-service
+      namespace: system
+      path: /validate-rabbitmq-com-rabbitmq-com-v1beta1-rabbitmqcluster
+  failurePolicy: Fail
+  name: vrabbitmqcluster.kb.io
+  rules:
+  - apiGroups:
+    - rabbitmq.com.rabbitmq.com
+    apiVersions:
+    - v1beta1
+    operations:
+    - CREATE
+    - UPDATE
+    resources:
+    - rabbitmqclusters

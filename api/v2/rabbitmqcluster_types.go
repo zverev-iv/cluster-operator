@@ -1,24 +1,29 @@
-// RabbitMQ Cluster Operator
-//
-// Copyright 2020 VMware, Inc. All Rights Reserved.
-//
-// This product is licensed to you under the Mozilla Public license, Version 2.0 (the "License").  You may not use this product except in compliance with the Mozilla Public License.
-//
-// This product may include a number of subcomponents with separate copyright notices and license terms. Your use of these subcomponents is subject to the terms and conditions of the subcomponent's license, as noted in the LICENSE file.
+/*
 
-package v1beta1
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
+package v2
 
 import (
-	"reflect"
-	"strings"
-
-	appsv1 "k8s.io/api/apps/v1"
-
 	"github.com/rabbitmq/cluster-operator/internal/status"
+	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	k8sresource "k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"strings"
 )
 
 const (
@@ -32,7 +37,6 @@ const (
 )
 
 // +kubebuilder:object:root=true
-// +kubebuilder:storageversion
 
 // RabbitmqCluster is the Schema for the rabbitmqclusters API
 // +kubebuilder:subresource:status
@@ -55,7 +59,7 @@ type RabbitmqClusterSpec struct {
 	Image string `json:"image,omitempty"`
 	// Name of the Secret resource containing access credentials to the registry for the RabbitMQ image. Required if the docker registry is private.
 	ImagePullSecret string                         `json:"imagePullSecret,omitempty"`
-	Service         RabbitmqClusterServiceSpec     `json:"service,omitempty"`
+	ClientService   RabbitmqClusterServiceSpec     `json:"clientService,omitempty"`
 	Persistence     RabbitmqClusterPersistenceSpec `json:"persistence,omitempty"`
 	Resources       *corev1.ResourceRequirements   `json:"resources,omitempty"`
 	Affinity        *corev1.Affinity               `json:"affinity,omitempty"`
@@ -390,65 +394,4 @@ func (cluster RabbitmqCluster) ChildResourceName(name string) string {
 
 func init() {
 	SchemeBuilder.Register(&RabbitmqCluster{}, &RabbitmqClusterList{})
-}
-
-func getDefaultPersistenceStorageQuantity() *k8sresource.Quantity {
-	tenGi := k8sresource.MustParse(defaultPersistentCapacity)
-	return &tenGi
-}
-
-var one int32 = 1
-
-var rabbitmqClusterDefaults = RabbitmqCluster{
-	Spec: RabbitmqClusterSpec{
-		Replicas: &one,
-		Image:    rabbitmqImage,
-		Service: RabbitmqClusterServiceSpec{
-			Type: defaultServiceType,
-		},
-		Persistence: RabbitmqClusterPersistenceSpec{
-			Storage: getDefaultPersistenceStorageQuantity(),
-		},
-		Resources: &corev1.ResourceRequirements{
-			Limits: map[corev1.ResourceName]k8sresource.Quantity{
-				"cpu":    k8sresource.MustParse(defaultCPULimit),
-				"memory": k8sresource.MustParse(defaultMemoryLimit),
-			},
-			Requests: map[corev1.ResourceName]k8sresource.Quantity{
-				"cpu":    k8sresource.MustParse(defaultCPURequest),
-				"memory": k8sresource.MustParse(defaultMemoryRequest),
-			},
-		},
-	},
-}
-
-func MergeDefaults(current RabbitmqCluster) *RabbitmqCluster {
-	var mergedRabbitmq RabbitmqCluster = current
-
-	emptyRabbitmq := RabbitmqCluster{}
-	// Note: we do not check for ImagePullSecret or StorageClassName since the default and nil value are both "".
-	// The logic of the check would be 'if actual is an empty string, then set to an empty string'
-	// We also do not check for Annotations as the nil value will be the empty map.
-
-	if mergedRabbitmq.Spec.Replicas == emptyRabbitmq.Spec.Replicas {
-		mergedRabbitmq.Spec.Replicas = rabbitmqClusterDefaults.Spec.Replicas
-	}
-
-	if mergedRabbitmq.Spec.Image == emptyRabbitmq.Spec.Image {
-		mergedRabbitmq.Spec.Image = rabbitmqClusterDefaults.Spec.Image
-	}
-
-	if mergedRabbitmq.Spec.Service.Type == emptyRabbitmq.Spec.Service.Type {
-		mergedRabbitmq.Spec.Service.Type = rabbitmqClusterDefaults.Spec.Service.Type
-	}
-
-	if reflect.DeepEqual(mergedRabbitmq.Spec.Persistence.Storage, emptyRabbitmq.Spec.Persistence.Storage) {
-		mergedRabbitmq.Spec.Persistence.Storage = rabbitmqClusterDefaults.Spec.Persistence.Storage
-	}
-
-	if reflect.DeepEqual(mergedRabbitmq.Spec.Resources, emptyRabbitmq.Spec.Resources) {
-		mergedRabbitmq.Spec.Resources = rabbitmqClusterDefaults.Spec.Resources
-	}
-
-	return &mergedRabbitmq
 }

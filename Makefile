@@ -4,7 +4,7 @@
 .PHONY: list
 
 # Produce CRDs that work back to Kubernetes 1.11 (no version conversion)
-CRD_OPTIONS ?= "crd:trivialVersions=true, preserveUnknownFields=false, crdVersions=v1"
+CRD_OPTIONS ?= "crd:preserveUnknownFields=false, crdVersions=v1"
 
 # Insert a comment starting with '##' after a target, and it will be printed by 'make' and 'make list'
 list:    ## list Makefile targets
@@ -18,7 +18,7 @@ integration-tests: install-tools generate fmt vet manifests ## Run integration t
 	ginkgo -r controllers/
 
 manifests: install-tools ## Generate manifests e.g. CRD, RBAC etc.
-	controller-gen $(CRD_OPTIONS) rbac:roleName=operator-role paths="./api/...;./controllers/..." output:crd:artifacts:config=config/crd/bases
+	controller-gen $(CRD_OPTIONS) rbac:roleName=operator-role webhook paths="./api/...;./controllers/..." output:crd:artifacts:config=config/crd/bases
 	./hack/add-notice-to-yaml.sh config/rbac/role.yaml
 # this is temporary workaround due to issue https://github.com/kubernetes/kubernetes/issues/91395
 # the hack ensures that "protocal" is a required value where this field is listed as x-kubernetes-list-map-keys
@@ -49,7 +49,7 @@ deploy-manager:  ## Deploy manager
 	kustomize build config/default/base | kubectl apply -f -
 
 deploy-manager-dev:
-	kustomize build config/crd | kubectl apply -f -
+	kustomize build config/crd | kubectl create -f -
 	kustomize build config/default/overlays/dev | sed 's@((operator_docker_image))@"$(DOCKER_REGISTRY_SERVER)/$(OPERATOR_IMAGE):$(GIT_COMMIT)"@' | kubectl apply -f -
 
 deploy-sample: ## Deploy RabbitmqCluster defined in config/sample/base

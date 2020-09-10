@@ -12,11 +12,11 @@ resources:
 # - ../../rbac
 - ../../manager
 # [WEBHOOK] Uncomment all the sections with [WEBHOOK] prefix to enable webhook.
-#- ../webhook
+- ../../webhook
 # [CERTMANAGER] Uncomment next line to enable cert-manager
-#- ../certmanager
+- ../../certmanager
 
-patches:
+patchesStrategicMerge:
 - manager_image_patch.yaml
 # This patch stop manager from emitting any metrics
 # For more context, refer to story #167092237
@@ -35,8 +35,36 @@ patches:
 #- manager_prometheus_metrics_patch.yaml
 
 # [WEBHOOK] Uncomment all the sections with [WEBHOOK] prefix to enable webhook.
-#- manager_webhook_patch.yaml
+- manager_webhook_patch.yaml
 
 # [CAINJECTION] Uncomment next line to enable the CA injection in the admission webhooks. [CERTMANAGER] needs to be
 # enabled to use ca injection
-#- webhookcainjection_patch.yaml
+- webhookcainjection_patch.yaml
+#
+vars:
+- name: CERTIFICATE_NAMESPACE # namespace of the certificate CR
+  objref:
+    kind: Certificate
+    group: cert-manager.io
+    version: v1alpha2
+    name: serving-cert # this name should match the one in certificate.yaml
+  fieldref:
+    fieldpath: metadata.namespace
+- name: CERTIFICATE_NAME
+  objref:
+    kind: Certificate
+    group: cert-manager.io
+    version: v1alpha2
+    name: serving-cert # this name should match the one in certificate.yaml
+- name: SERVICE_NAMESPACE # namespace of the service
+  objref:
+    kind: Service
+    version: v1
+    name: webhook-service
+  fieldref:
+    fieldpath: metadata.namespace
+- name: SERVICE_NAME
+  objref:
+    kind: Service
+    version: v1
+    name: webhook-service

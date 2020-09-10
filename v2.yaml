@@ -6,26 +6,9 @@
 #
 # This product may include a number of subcomponents with separate copyright notices and license terms. Your use of these subcomponents is subject to the terms and conditions of the subcomponent's license, as noted in the LICENSE file.
 
-apiVersion: apps/v1
-kind: Deployment
+apiVersion: rabbitmq.com/v2
+kind: RabbitmqCluster
 metadata:
-  name: operator
-  namespace: system
+  name: rabbitmqcluster-sample
 spec:
-  template:
-    spec:
-      containers:
-      - name: operator
-        ports:
-        - containerPort: 9443
-          name: webhook-server
-          protocol: TCP
-        volumeMounts:
-        - mountPath: /tmp/k8s-webhook-server/serving-certs
-          name: cert
-          readOnly: true
-      volumes:
-      - name: cert
-        secret:
-          defaultMode: 420
-          secretName: webhook-server-cert
+  replicas: 1
