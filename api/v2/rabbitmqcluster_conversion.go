@@ -46,7 +46,7 @@ func (dst *RabbitmqCluster) ConvertFrom(srcRaw conversion.Hub) error {
 	if src.Spec.Service.Annotations != nil {
 		dst.Spec.ClientService.Annotations = src.Spec.Service.Annotations
 	}
-	
+
 	// initialize empty status.Conditions
 	// status.Conditions cannot be nil
 	if len(dst.Status.Conditions) == 0 {

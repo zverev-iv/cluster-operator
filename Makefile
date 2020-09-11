@@ -41,6 +41,7 @@ generate: install-tools
 	conversion-gen \
 		--input-dirs=./api/v2 \
 		--output-file-base=zz_generated.conversion \
+		--output-base "." \
 		--go-header-file=./hack/boilerplate.go.txt
 
 # Build manager binary

@@ -1,105 +1,69 @@
-# RabbitMQ Cluster Kubernetes Operator
+# Multiversion conversion with RabbitmqCluster
 
-Manage [RabbitMQ](https://www.rabbitmq.com/) clusters deployed to [Kubernetes](https://kubernetes.io/). The RabbitMQ Cluster Kubernetes Operator has been built using the [Kubebuilder](https://github.com/kubernetes-sigs/kubebuilder) implementation of the [operator pattern](https://coreos.com/blog/introducing-operators.html). This repository contains a [custom controller](https://kubernetes.io/docs/concepts/extend-kubernetes/api-extension/custom-resources/#custom-controllers) and [custom resource definition (CRD)](https://kubernetes.io/docs/concepts/extend-kubernetes/api-extension/custom-resources/#customresourcedefinitions) designed for the lifecyle (creation, upgrade, graceful shutdown) of a RabbitMQ cluster.
+## Experiment
 
-**Note**: this repository is under active development and is provided as **beta** software. Official support for this software is not provided; if you encounter any issues running this software, please feel free to [contribute to the project](#contributing).
+Operator supports 2 versions: RabbitmqCluster `v1beta1` and a new version `v2` which has `spec.service` renamed to `spec.clientService`.
 
-## Supported Versions
+### What I did
 
-The operator deploys RabbitMQ `3.8.5`, and requires a Kubernetes cluster of `1.16` or above.
+Steps before writing version conversion.
+I created a placeholder mutating and validating webhook to make sure that the wiring of webhooks and cert manager is correct before writing conversion.
 
-## Versioning
+1. Install cert manager `kubectl apply --validate=false -f https://github.com/jetstack/cert-manager/releases/download/v1.0.1/cert-manager.yaml`
+1. Generated a brand new kubebuilder project with api RabbitmqCluster `v1beta1`. There are manifests required for implementing a webhook that's not in our project. The new project was used to copy over some manifests files. Everything under `config/webhook` and `config/certmanager` was copied over. There are also kustomize variables needed to be copied in file `config/default/base/kustomization.yaml`.
+1. Created a validating and a mutating webhooks for version `v1beta1`. `kubebuilder create webhook --group rabbitmq.com --version v1beta1 --kind RabbitmqCluster --defaulting --programmatic-validation`
+1. Enable all webhook and cert manager related kustomize files. It's mostly uncommenting sections in `config/default/base/kustomization.yaml`
+1. Add webbook as controller-gen options so that it creates webbook manifests to register both the mutating and the validating webhook.
+   `controller-gen $(CRD_OPTIONS) rbac:roleName=operator-role webhook paths="./api/...;./controllers/..." output:crd:artifacts:config=config/crd/bases`
+1. `makenv deploy-dev` succeeds. Operator failed to come up because it does not have permission to bind on port `443`, which is the default port, and also a privilege port. So I changed the webhook service that `targetPort` is set to `9443` and customized the webhook port in `api/v1beta1/rabbitmqcluster_webhook.go`.
+1. `makenv deploy-dev` now succeeds. However, webhooks are all failing and I can't create RabbitmqCluster. It's failing before kubebuilder generated manifests on webhooks and cert manager have errors. To fix the issue, I had to: made sure that cert name and cert namespace were using the correct variables defined in vars section of `config/default/base/kustomization.yaml` (correct values are `CERTICIFATE_NAME` and `CERTIFICATE_NAMESPACE`).
 
-RabbitMQ Cluster Kubernetes Operator follows non-strict [semver](https://semver.org/).
+After making sure that the wiring between certmanager and webhooks are working. I moved on to writing the conversion webhooks.
 
-[The versioning guidelines document](version_guidelines.md) contains guidelines
-on how we implement non-strict semver. The version number MAY or MAY NOT follow the semver rules. Hence, we highly recommend to read
-the release notes to understand the changes and their potential impact for any release.
+1. Generate a new api version `kubebuilder create api --group rabbitmq.com version v2 --kind RabbitmqCluster`
+1. Update group name in `api/v2/groupversion_info.go` to `rabbitmq.com`. By default, the group name is constructed as "group name + domain name", which is `rabbitmq.com.rabbitmq.com` for our apis.
+1. Copied over RabbitmqCluster definitions from `v1beta1` to the new version. Rename `spec.service` to `spec.clientService`
+1. Set `v1beta1` as the storage version by adding annotations `+kubebuilder:storageversion`.
+1. Update makefile to support multi version CRD generation by removing `trivialVersions=true` from crd options.
+1. `make manifests generate` and then `make install`. `make install` fails because it runs `k apply` which adds the entire last applied manifests to the annotations, and our crd definitions exceeds the 1MB file limit. This is fix by deleting the crd manually, and use `k create -f` in the makefile. Not an idea solution, need to look into alternative in the future.
+1. Create conversion file in `api/v2` and in `api/v1beta1`. Where `v1beta1` is hub version, and `v2`is the spoke version (manually writing conversion funtions, there will be later documented steps on using conversion-gen)
+1. Create RabbitmqCluster now fails with webhook error "certificate signed by unknown authority". This is because ca injection are not done correctly. I needed to fix annotations about ca injection in all files to `cert-manager.io/inject-ca-from: rabbitmq-system/rabbitmq-cluster-serving-cert`. Kustomize vars were not templating values..
+1. Destroy and `makenv deploy-dev` again. I can now create RabbitmqCluster `v1beta1` and `v2`.
 
-## Quickstart
+Steps for using conversion-gen
 
-### Deploying on KinD
+1. Delete all conversion logic in `api/v2/rabbitmqcluster_conversion.go`.
+1. Install the tool by adding it to tools/tools.go `_ "k8s.io/code-generator/cmd/conversion-gen"`.
+1. Create doc.go in `api/v2/`.
+1. Add conversion-gen annotation `// +k8s:conversion-gen=github.com/rabbitmq/cluster-operator/api/v1beta1` to `api/v2/doc.go`.
+1. Add conversion-gen annotation `// +k8s:conversion-gen=false` to skip fields that need manually conversion.
+1. Use conversion-gen to generate conversion file in `make generate`. This command can take several minutes to finish.
 
-The easiest way to set up a local development environment for running the RabbitMQ operator is using [KinD](https://kind.sigs.k8s.io/):
+```
+conversion-gen \
+	--input-dirs=./api/v2 \ # directory for it to scan for annotations
+	--output-file-base=zz_generated.conversion \ # name of the output generated conversion file
+	--output-base "." \ # it does not output the file without a output-base specified
+	--go-header-file=./hack/boilerplate.go.txt # without specified go-header-file, conversion-gen tries to find an non-existing file in its repo
+```
 
-1. Follow the KinD [installation guide](https://kind.sigs.k8s.io/#installation-and-usage) to deploy a Kubernetes cluster
-1. Ensure that all [Required environment variables](#required-environment-variables) are set in your environment
-1. Run `make deploy-kind`
-1. Check that the operator is running by running `kubectl get all --namespace=rabbitmq-system`
-1. Deploy a `RabbitmqCluster` custom resource. Refer to the [example YAML](./cr-example.yaml) and [documentation](https://docs.pivotal.io/rabbitmq-kubernetes/0-7/using.html#configure) for available CR attributes
-    1. Due to resource limitations on your Docker daemon, the Kubernetes might not be able to schedule all `RabbitmqCluster` nodes. Either [increase your Docker daemon's resource limits](https://docs.docker.com/docker-for-mac/#resources) or deploy the `RabbitmqCluster` custom resource with `resources: {}` to remove default `memory` and `cpu` resource settings.
-    1. If you set the `serviceType` to `LoadBalancer`, run `make kind-prepare` to deploy a [MetalLB](https://metallb.universe.tf/) load balancer. This will allow the operator to complete the `RabbitmqCluster` provisioning by assign an arbitrary local IP address to the cluster's client service. Proper [network configuration](https://metallb.universe.tf/installation/network-addons/) is required to route traffic via the assigned IP address.
+1. Use the generated conversion methods in `api/v2/rabbitmqcluster_conversion.go`.
+1. Manually adds conversion between `spec.service` and `spec.clientService` in both `convertTo` and `convertFrom`.
+1. Initialize `status.conditions` in both `convertTo` and `convertFrom` for creation. `status.conditions` cannot be nil.
+1. PROFIT
 
+### Reference documentations
+
+1. [conversion-gen](https://godoc.org/k8s.io/code-generator/cmd/conversion-gen)
+1. [install certmanager](https://cert-manager.io/docs/installation/kubernetes/)
+1. [kubebuilder book](https://book.kubebuilder.io/multiversion-tutorial/api-changes.html)
+1. [certmanager webhook issue annotations](https://github.com/jetstack/cert-manager/issues/2920#issuecomment-658779302)
+1. [kubebuilder issue on supporting conversion-gen](https://github.com/kubernetes-sigs/kubebuilder/issues/1529#issuecomment-656359330)
 
 ## Documentation
 
-RabbitMQ Cluster Kubernetes Operator is covered by several guides:
+Other operators with multi version conversions that I used as references.
 
- - [Operator overview](https://www.rabbitmq.com/kubernetes/operator/operator-overview.html)
- - [Deploying an operator](https://www.rabbitmq.com/kubernetes/operator/install-operator.html)
- - [Deploying a RabbitMQ cluster](https://www.rabbitmq.com/kubernetes/operator/using-operator.html)
- - [Monitoring the cluster](https://www.rabbitmq.com/kubernetes/operator/operator-monitoring.html)
- - [Troubleshooting operator deployments](https://www.rabbitmq.com/kubernetes/operator/troubleshooting-operator.html)
-
-In addition, a number of [examples](./docs/examples) can be found in this repository.
-
-The doc guides are open source. The source can be found in the [RabbitMQ website repository](https://github.com/rabbitmq/rabbitmq-website/)
-under `site/kubernetes`.
-
-
-## Makefile
-
-#### Required environment variables
-
-- DOCKER_REGISTRY_SERVER: URL of docker registry containing the Operator image (e.g. `registry.my-company.com`)
-- OPERATOR_IMAGE: path to the Operator image within the registry specified in DOCKER_REGISTRY_SERVER (e.g. `rabbitmq/cluster-operator`). Note: OPERATOR_IMAGE should **not** include a leading slash (`/`)
-
-When running `make deploy-dev`, additionally:
-
-- DOCKER_REGISTRY_USERNAME: Username for accessing the docker registry
-- DOCKER_REGISTRY_PASSWORD: Password for accessing the docker registry
-- DOCKER_REGISTRY_SECRET: Name of Kubernetes secret in which to store the Docker registry username and password
-
-#### Make targets
-
-- **controller-gen** Download controller-gen if not in $PATH
-- **deploy** Deploy operator in the configured Kubernetes cluster in ~/.kube/config
-- **deploy-dev** Deploy operator in the configured Kubernetes cluster in ~/.kube/config, with local changes
-- **deploy-kind** Load operator image and deploy operator into current KinD cluster
-- **deploy-sample** Deploy RabbitmqCluster defined in config/sample/base
-- **destroy** Cleanup all operator artefacts
-- **kind-prepare** Prepare KinD to support LoadBalancer services, and local-path StorageClass
-- **kind-unprepare** Remove KinD support for LoadBalancer services, and local-path StorageClass
-- **list** List Makefile targets
-- **run** Run operator binary locally against the configured Kubernetes cluster in ~/.kube/config
-- **unit-tests** Run unit tests
-- **integration-tests** Run integration tests
-- **system-tests** Run end-to-end tests against Kubernetes cluster defined in ~/.kube/config
-
-## Contributing
-
-This project follows the typical GitHub pull request model. Before starting any work, please either comment on an [existing issue](https://github.com/rabbitmq/cluster-operator/issues), or file a new one.
-
-### Testing
-
-Before submitting a pull request, ensure all local tests pass:
-- `make unit-tests`
-- `make integration-tests`
-
-<!-- TODO: generalise deployment process: make DOCKER_REGISTRY_SECRET and DOCKER_REGISTRY_SERVER configurable -->
-Also, run the system tests with your local changes against a Kubernetes cluster:
-- `make deploy-dev`
-- `make system-tests`
-
-### Code Conventions
-
-This project follows the [Kubernetes Code Conventions for Go](https://github.com/kubernetes/community/blob/master/contributors/guide/coding-conventions.md#code-conventions), which in turn mostly refer to [Effective Go](https://golang.org/doc/effective_go.html) and [Go Code Review Comments](https://github.com/golang/go/wiki/CodeReviewComments). Please ensure your pull requests follow these guidelines.
-
-## License
-
-[Licensed under the MPL](LICENSE.txt), same as RabbitMQ server.
-
-## Copyright
-
-Copyright 2020 VMware, Inc. All Rights Reserved.
-
+- [cluster-api](https://github.com/kubernetes-sigs/cluster-api/tree/master/api/v1alpha3)
+- [kubeflow](https://github.com/kubeflow/kubeflow/tree/master/components/notebook-controller/api)
+- [certmanager](https://github.com/jetstack/cert-manager/tree/66d45afcdb3d7b3eb06a445916fd48b045d9e218/pkg/internal/apis/meta/v1)
