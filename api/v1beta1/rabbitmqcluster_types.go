@@ -55,6 +55,7 @@ type RabbitmqClusterSpec struct {
 	Image string `json:"image,omitempty"`
 	// Name of the Secret resource containing access credentials to the registry for the RabbitMQ image. Required if the docker registry is private.
 	ImagePullSecret string                         `json:"imagePullSecret,omitempty"`
+	// +k8s:conversion-gen=false
 	Service         RabbitmqClusterServiceSpec     `json:"service,omitempty"`
 	Persistence     RabbitmqClusterPersistenceSpec `json:"persistence,omitempty"`
 	Resources       *corev1.ResourceRequirements   `json:"resources,omitempty"`
@@ -272,6 +273,7 @@ type RabbitmqClusterPersistenceSpec struct {
 }
 
 // Settable attributes for the Client Service resource.
+// +k8s:conversion-gen=false
 type RabbitmqClusterServiceSpec struct {
 	// +kubebuilder:validation:Enum=ClusterIP;LoadBalancer;NodePort
 	Type corev1.ServiceType `json:"type,omitempty"`

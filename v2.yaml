@@ -9,6 +9,8 @@
 apiVersion: rabbitmq.com/v2
 kind: RabbitmqCluster
 metadata:
-  name: rabbitmqcluster-sample
+  name: v2-sample
 spec:
   replicas: 1
+  clientService:
+    type: NodePort

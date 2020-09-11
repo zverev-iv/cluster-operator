@@ -38,6 +38,10 @@ vet:
 generate: install-tools
 	controller-gen object:headerFile=./hack/NOTICE.go.txt paths=./api/...
 	controller-gen object:headerFile=./hack/NOTICE.go.txt paths=./internal/status/...
+	conversion-gen \
+		--input-dirs=./api/v2 \
+		--output-file-base=zz_generated.conversion \
+		--go-header-file=./hack/boilerplate.go.txt
 
 # Build manager binary
 manager: generate fmt vet

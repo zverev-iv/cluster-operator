@@ -12,3 +12,5 @@ metadata:
   name: v1-sample
 spec:
   replicas: 1
+  service:
+    type: NodePort

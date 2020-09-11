@@ -10,10 +10,11 @@ import (
 func (src *RabbitmqCluster) ConvertTo(dstRaw conversion.Hub) error {
 	dst := dstRaw.(*v1beta1.RabbitmqCluster)
 
-	// copy object meta
-	dst.ObjectMeta = src.ObjectMeta
+	if err := Convert_v2_RabbitmqCluster_To_v1beta1_RabbitmqCluster(src, dst, nil); err != nil {
+		return err
+	}
 
-	// conversion of Service to ClientService
+	// manual conversion of Service to ClientService
 	if src.Spec.ClientService.Type != "" {
 		dst.Spec.Service.Type = src.Spec.ClientService.Type
 	}
@@ -21,37 +22,11 @@ func (src *RabbitmqCluster) ConvertTo(dstRaw conversion.Hub) error {
 		dst.Spec.Service.Annotations = src.Spec.ClientService.Annotations
 	}
 
-	// copy the rest of the spec
-	dst.Spec.Image = src.Spec.Image
-	dst.Spec.Replicas = src.Spec.Replicas
-	dst.Spec.Rabbitmq.AdvancedConfig = src.Spec.Rabbitmq.AdvancedConfig
-	dst.Spec.Rabbitmq.AdditionalConfig = src.Spec.Rabbitmq.AdditionalConfig
-	dst.Spec.Rabbitmq.EnvConfig = src.Spec.Rabbitmq.EnvConfig
-	dst.Spec.ImagePullSecret = src.Spec.ImagePullSecret
-	copyPluginsTov1beta1(dst, src.Spec.Rabbitmq.AdditionalPlugins)
-
-	// copy status
-	if src.Status.Admin != nil {
-		dst.Status.Admin = &v1beta1.RabbitmqClusterAdmin{
-			SecretReference: &v1beta1.RabbitmqClusterSecretReference{
-				Name:      src.Status.Admin.SecretReference.Name,
-				Namespace: src.Status.Admin.SecretReference.Namespace,
-				Keys:      src.Status.Admin.SecretReference.Keys,
-			},
-			ServiceReference: &v1beta1.RabbitmqClusterServiceReference{
-				Name:      src.Status.Admin.ServiceReference.Name,
-				Namespace: src.Status.Admin.ServiceReference.Namespace,
-			},
-		}
-	}
-
-	if len(src.Status.Conditions) == 0 {
+	// initialize empty status.Conditions
+	// status.Conditions cannot be nil
+	if len(dst.Status.Conditions) == 0 {
 		dst.Status.Conditions = []status.RabbitmqClusterCondition{}
-	} else {
-		dst.Status.Conditions = src.Status.Conditions
 	}
-
-	dst.Status.ClusterStatus = src.Status.ClusterStatus
 
 	return nil
 }
@@ -60,48 +35,23 @@ func (src *RabbitmqCluster) ConvertTo(dstRaw conversion.Hub) error {
 func (dst *RabbitmqCluster) ConvertFrom(srcRaw conversion.Hub) error {
 	src := srcRaw.(*v1beta1.RabbitmqCluster)
 
-	// copy object meta
-	dst.ObjectMeta = src.ObjectMeta
+	if err := Convert_v1beta1_RabbitmqCluster_To_v2_RabbitmqCluster(src, dst, nil); err != nil {
+		return err
+	}
 
-	// conversion of ClientService to Service
+	// manual conversion of ClientService to Service
 	if src.Spec.Service.Type != "" {
 		dst.Spec.ClientService.Type = src.Spec.Service.Type
 	}
 	if src.Spec.Service.Annotations != nil {
 		dst.Spec.ClientService.Annotations = src.Spec.Service.Annotations
 	}
-
-	// copy the rest of the spec
-	dst.Spec.Image = src.Spec.Image
-	dst.Spec.Replicas = src.Spec.Replicas
-	dst.Spec.Rabbitmq.AdvancedConfig = src.Spec.Rabbitmq.AdvancedConfig
-	dst.Spec.Rabbitmq.AdditionalConfig = src.Spec.Rabbitmq.AdditionalConfig
-	dst.Spec.Rabbitmq.EnvConfig = src.Spec.Rabbitmq.EnvConfig
-	dst.Spec.ImagePullSecret = src.Spec.ImagePullSecret
-	copyPluginsTov2(dst, src.Spec.Rabbitmq.AdditionalPlugins)
-
-	// copy status
-	if src.Status.Admin != nil {
-		dst.Status.Admin = &RabbitmqClusterAdmin{
-			SecretReference: &RabbitmqClusterSecretReference{
-				Name:      src.Status.Admin.SecretReference.Name,
-				Namespace: src.Status.Admin.SecretReference.Namespace,
-				Keys:      src.Status.Admin.SecretReference.Keys,
-			},
-			ServiceReference: &RabbitmqClusterServiceReference{
-				Name:      src.Status.Admin.ServiceReference.Name,
-				Namespace: src.Status.Admin.ServiceReference.Namespace,
-			},
-		}
-	}
-
-	if len(src.Status.Conditions) == 0 {
+	
+	// initialize empty status.Conditions
+	// status.Conditions cannot be nil
+	if len(dst.Status.Conditions) == 0 {
 		dst.Status.Conditions = []status.RabbitmqClusterCondition{}
-	} else {
-		dst.Status.Conditions = src.Status.Conditions
 	}
-
-	dst.Status.ClusterStatus = src.Status.ClusterStatus
 
 	return nil
 }
