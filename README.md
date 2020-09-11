@@ -35,8 +35,8 @@ Steps for using conversion-gen
 1. Delete all conversion logic in `api/v2/rabbitmqcluster_conversion.go`.
 1. Install the tool by adding it to tools/tools.go `_ "k8s.io/code-generator/cmd/conversion-gen"`.
 1. Create doc.go in `api/v2/`.
-1. Add conversion-gen annotation `// +k8s:conversion-gen=github.com/rabbitmq/cluster-operator/api/v1beta1` to `api/v2/doc.go`.
-1. Add conversion-gen annotation `// +k8s:conversion-gen=false` to skip fields that need manually conversion.
+1. Add conversion-gen annotation `+k8s:conversion-gen=github.com/rabbitmq/cluster-operator/api/v1beta1` to `api/v2/doc.go`.
+1. Add conversion-gen annotation `+k8s:conversion-gen=false` to skip fields that need manually conversion.
 1. Use conversion-gen to generate conversion file in `make generate`. This command can take several minutes to finish.
 
 ```
@@ -52,18 +52,48 @@ conversion-gen \
 1. Initialize `status.conditions` in both `convertTo` and `convertFrom` for creation. `status.conditions` cannot be nil.
 1. PROFIT
 
+### Caveat
+
+1. Cert manager itself has just GA ed and released `v1`.
+1. conversion-gen is not by default included in kubebuilder yet.
+1. conversion-gen is experimental at the moment and has bugs.
+1. Dependency on cert manager could be hard to manager. Users need to have cert manager install before using our operator, and it needs to be cert manager `v1` since older version of cert manager has different supported annotations and types.
+
 ### Reference documentations
 
 1. [conversion-gen](https://godoc.org/k8s.io/code-generator/cmd/conversion-gen)
-1. [install certmanager](https://cert-manager.io/docs/installation/kubernetes/)
+1. [install cert manager](https://cert-manager.io/docs/installation/kubernetes/)
 1. [kubebuilder book](https://book.kubebuilder.io/multiversion-tutorial/api-changes.html)
-1. [certmanager webhook issue annotations](https://github.com/jetstack/cert-manager/issues/2920#issuecomment-658779302)
+1. [cert manager webhook issue annotations](https://github.com/jetstack/cert-manager/issues/2920#issuecomment-658779302)
 1. [kubebuilder issue on supporting conversion-gen](https://github.com/kubernetes-sigs/kubebuilder/issues/1529#issuecomment-656359330)
-
-## Documentation
 
 Other operators with multi version conversions that I used as references.
 
-- [cluster-api](https://github.com/kubernetes-sigs/cluster-api/tree/master/api/v1alpha3)
-- [kubeflow](https://github.com/kubeflow/kubeflow/tree/master/components/notebook-controller/api)
-- [certmanager](https://github.com/jetstack/cert-manager/tree/66d45afcdb3d7b3eb06a445916fd48b045d9e218/pkg/internal/apis/meta/v1)
+1. [cluster-api](https://github.com/kubernetes-sigs/cluster-api/tree/master/api/v1alpha3)
+1. [kubeflow](https://github.com/kubeflow/kubeflow/tree/master/components/notebook-controller/api)
+1. [cert-manager](https://github.com/jetstack/cert-manager/tree/66d45afcdb3d7b3eb06a445916fd48b045d9e218/pkg/internal/apis/meta/v1)
+
+## Other notes
+
+All supported CRD versions need to be able to convert to each other and back.
+
+This means given 2 supported CRD versions, `v1beta1` and `v1`, when we add a new fields to `v1`, we also need to make sure the same functionality is supported in `v1beta1`. This is to make sure that for a CRD that is converted from `v1` to `v1beta1`, and then back `v1` does not lose its functionality.
+
+There is no internal version supported for CRDs. Storage versions can only be chosen from serving CRD versions.
+
+No new version is needed for any backwards-compatible changes.
+
+Given all the above. We only need to introduce a new version if a new feature is **not backwards-compatible**, such as:
+
+1. delete existing fields
+2. rename existing fields
+3. change semantics of existing fields
+4. change of default behaviors
+
+We do not need to write api conversion unless we make changes to our api in any of the above.
+
+So far, we have only added new fields to our CRD, and we never needed a new version and a conversion hook.
+
+### Reference
+
+1. [kubernetes api changes documentation](https://github.com/kubernetes/community/blob/master/contributors/devel/sig-architecture/api_changes.md)
