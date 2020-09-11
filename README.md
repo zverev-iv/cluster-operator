@@ -10,8 +10,8 @@ Steps before writing version conversion.
 I created a placeholder mutating and validating webhook to make sure that the wiring of webhooks and cert manager is correct before writing conversion.
 
 1. Install cert manager `kubectl apply --validate=false -f https://github.com/jetstack/cert-manager/releases/download/v1.0.1/cert-manager.yaml`
-1. Generated a brand new kubebuilder project with api RabbitmqCluster `v1beta1`. There are manifests required for implementing a webhook that's not in our project. The new project was used to copy over some manifests files. Everything under `config/webhook` and `config/certmanager` was copied over. There are also kustomize variables needed to be copied in file `config/default/base/kustomization.yaml`.
-1. Created a validating and a mutating webhooks for version `v1beta1`. `kubebuilder create webhook --group rabbitmq.com --version v1beta1 --kind RabbitmqCluster --defaulting --programmatic-validation`
+1. Generate a brand new kubebuilder project with api RabbitmqCluster `v1beta1`. There are manifests required for implementing a webhook that's not in our project. The new project was used to copy over some manifests files. Everything under `config/webhook` and `config/certmanager` was copied over. There are also kustomize variables needed to be copied in file `config/default/base/kustomization.yaml`.
+1. Create a validating and a mutating webhooks for version `v1beta1`. `kubebuilder create webhook --group rabbitmq.com --version v1beta1 --kind RabbitmqCluster --defaulting --programmatic-validation`
 1. Enable all webhook and cert manager related kustomize files. It's mostly uncommenting sections in `config/default/base/kustomization.yaml`
 1. Add webbook as controller-gen options so that it creates webbook manifests to register both the mutating and the validating webhook.
    `controller-gen $(CRD_OPTIONS) rbac:roleName=operator-role webhook paths="./api/...;./controllers/..." output:crd:artifacts:config=config/crd/bases`
@@ -22,7 +22,7 @@ After making sure that the wiring between certmanager and webhooks are working. 
 
 1. Generate a new api version `kubebuilder create api --group rabbitmq.com version v2 --kind RabbitmqCluster`
 1. Update group name in `api/v2/groupversion_info.go` to `rabbitmq.com`. By default, the group name is constructed as "group name + domain name", which is `rabbitmq.com.rabbitmq.com` for our apis.
-1. Copied over RabbitmqCluster definitions from `v1beta1` to the new version. Rename `spec.service` to `spec.clientService`
+1. Copy over RabbitmqCluster types from `v1beta1` to `v2`. Rename `spec.service` to `spec.clientService`.
 1. Set `v1beta1` as the storage version by adding annotations `+kubebuilder:storageversion`.
 1. Update makefile to support multi version CRD generation by removing `trivialVersions=true` from crd options.
 1. `make manifests generate` and then `make install`. `make install` fails because it runs `k apply` which adds the entire last applied manifests to the annotations, and our crd definitions exceeds the 1MB file limit. This is fix by deleting the crd manually, and use `k create -f` in the makefile. Not an idea solution, need to look into alternative in the future.
@@ -48,12 +48,13 @@ conversion-gen \
 ```
 
 1. Use the generated conversion methods in `api/v2/rabbitmqcluster_conversion.go`.
-1. Manually adds conversion between `spec.service` and `spec.clientService` in both `convertTo` and `convertFrom`.
+1. Add conversion between `spec.service` and `spec.clientService` in both `convertTo` and `convertFrom`.
 1. Initialize `status.conditions` in both `convertTo` and `convertFrom` for creation. `status.conditions` cannot be nil.
 1. PROFIT
 
-### Caveat
+### Problems
 
+1. CRD manifest length. We cannot ask people to delete their CRD to be able to use `k create -f`. We need a solution to this problem.
 1. Cert manager itself has just GA ed and released `v1`.
 1. conversion-gen is not by default included in kubebuilder yet.
 1. conversion-gen is experimental at the moment and has bugs.
@@ -96,4 +97,4 @@ So far, we have only added new fields to our CRD, and we never needed a new vers
 
 ### Reference
 
-1. [kubernetes api changes documentation](https://github.com/kubernetes/community/blob/master/contributors/devel/sig-architecture/api_changes.md)
+1. [kubernetes api changes architecture documentation](https://github.com/kubernetes/community/blob/master/contributors/devel/sig-architecture/api_changes.md). The section on backwards-compatible is crutial.
