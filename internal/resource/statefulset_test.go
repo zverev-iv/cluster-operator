@@ -65,6 +65,7 @@ var _ = Describe("StatefulSet", func() {
 
 			Expect(statefulSet.Spec.ServiceName).To(Equal(instance.ChildResourceName("headless")))
 		})
+
 		It("adds the correct label selector", func() {
 			obj, err := stsBuilder.Build()
 			Expect(err).NotTo(HaveOccurred())
@@ -96,6 +97,7 @@ var _ = Describe("StatefulSet", func() {
 			q, _ := k8sresource.ParseQuantity("21Gi")
 			Expect(statefulSet.Spec.VolumeClaimTemplates[0].Spec.Resources.Requests["storage"]).To(Equal(q))
 		})
+
 		Context("PVC template", func() {
 			It("creates the required PersistentVolumeClaim", func() {
 				q, _ := k8sresource.ParseQuantity("10Gi")
@@ -139,6 +141,7 @@ var _ = Describe("StatefulSet", func() {
 				Expect(actualPersistentVolumeClaim).To(Equal(expectedPersistentVolumeClaim))
 			})
 		})
+
 		Context("Override", func() {
 			It("overrides statefulSet.spec.selector", func() {
 				builder.Instance.Spec.Override.StatefulSet = &rabbitmqv1beta1.StatefulSet{
@@ -292,49 +295,359 @@ var _ = Describe("StatefulSet", func() {
 			}
 		})
 
-		It("creates the affinity rule as provided in the instance", func() {
-			affinity := &corev1.Affinity{
-				NodeAffinity: &corev1.NodeAffinity{
-					RequiredDuringSchedulingIgnoredDuringExecution: &corev1.NodeSelector{
-						NodeSelectorTerms: []corev1.NodeSelectorTerm{
-							{
-								MatchExpressions: []corev1.NodeSelectorRequirement{
-									{
-										Key:      "foo",
-										Operator: "Exists",
-										Values:   nil,
+		Context("Default configurations", func() {
+			It("configures the affinity rule when provided", func() {
+				affinity := &corev1.Affinity{
+					NodeAffinity: &corev1.NodeAffinity{
+						RequiredDuringSchedulingIgnoredDuringExecution: &corev1.NodeSelector{
+							NodeSelectorTerms: []corev1.NodeSelectorTerm{
+								{
+									MatchExpressions: []corev1.NodeSelectorRequirement{
+										{
+											Key:      "foo",
+											Operator: "Exists",
+											Values:   nil,
+										},
 									},
 								},
 							},
 						},
 					},
-				},
-			}
-			stsBuilder.Instance.Spec.Affinity = affinity
+				}
+				stsBuilder.Instance.Spec.Affinity = affinity
 
-			Expect(stsBuilder.Update(statefulSet)).To(Succeed())
-			Expect(statefulSet.Spec.Template.Spec.Affinity).To(Equal(affinity))
-		})
+				Expect(stsBuilder.Update(statefulSet)).To(Succeed())
+				Expect(statefulSet.Spec.Template.Spec.Affinity).To(Equal(affinity))
+			})
 
-		It("sets the owner reference", func() {
-			stsBuilder := builder.StatefulSet()
-			Expect(stsBuilder.Update(statefulSet)).To(Succeed())
+			It("sets the owner reference", func() {
+				stsBuilder := builder.StatefulSet()
+				Expect(stsBuilder.Update(statefulSet)).To(Succeed())
 
-			Expect(len(statefulSet.OwnerReferences)).To(Equal(1))
-			Expect(statefulSet.OwnerReferences[0].Name).To(Equal(builder.Instance.Name))
-		})
+				Expect(len(statefulSet.OwnerReferences)).To(Equal(1))
+				Expect(statefulSet.OwnerReferences[0].Name).To(Equal(builder.Instance.Name))
+			})
 
-		It("specifies the upgrade policy", func() {
-			stsBuilder := builder.StatefulSet()
-			Expect(stsBuilder.Update(statefulSet)).To(Succeed())
-			updateStrategy := appsv1.StatefulSetUpdateStrategy{
-				RollingUpdate: &appsv1.RollingUpdateStatefulSetStrategy{
-					Partition: pointer.Int32Ptr(0),
-				},
-				Type: appsv1.RollingUpdateStatefulSetStrategyType,
-			}
+			It("sets the upgrade policy", func() {
+				stsBuilder := builder.StatefulSet()
+				Expect(stsBuilder.Update(statefulSet)).To(Succeed())
+				updateStrategy := appsv1.StatefulSetUpdateStrategy{
+					RollingUpdate: &appsv1.RollingUpdateStatefulSetStrategy{
+						Partition: pointer.Int32Ptr(0),
+					},
+					Type: appsv1.RollingUpdateStatefulSetStrategyType,
+				}
 
-			Expect(statefulSet.Spec.UpdateStrategy).To(Equal(updateStrategy))
+				Expect(statefulSet.Spec.UpdateStrategy).To(Equal(updateStrategy))
+			})
+
+			It("sets replicas", func() {
+				stsBuilder := builder.StatefulSet()
+				Expect(stsBuilder.Update(statefulSet)).To(Succeed())
+
+				Expect(*statefulSet.Spec.Replicas).To(Equal(int32(1)))
+			})
+
+			It("sets a TopologySpreadConstraint", func() {
+				stsBuilder := builder.StatefulSet()
+				Expect(stsBuilder.Update(statefulSet)).To(Succeed())
+
+				Expect(statefulSet.Spec.Template.Spec.TopologySpreadConstraints).To(ConsistOf(
+					corev1.TopologySpreadConstraint{
+						MaxSkew:           1,
+						TopologyKey:       "topology.kubernetes.io/zone",
+						WhenUnsatisfiable: corev1.ScheduleAnyway,
+						LabelSelector: &metav1.LabelSelector{
+							MatchLabels: map[string]string{
+								"app.kubernetes.io/name": instance.Name,
+							},
+						},
+					}))
+			})
+
+			It("sets resources requirements on the init container", func() {
+				stsBuilder := builder.StatefulSet()
+				Expect(stsBuilder.Update(statefulSet)).To(Succeed())
+
+				resources := statefulSet.Spec.Template.Spec.InitContainers[0].Resources
+				Expect(resources.Requests["cpu"]).To(Equal(k8sresource.MustParse("100m")))
+				Expect(resources.Requests["memory"]).To(Equal(k8sresource.MustParse("500Mi")))
+				Expect(resources.Limits["cpu"]).To(Equal(k8sresource.MustParse("100m")))
+				Expect(resources.Limits["memory"]).To(Equal(k8sresource.MustParse("500Mi")))
+			})
+
+			It("exposes required Container Ports", func() {
+				stsBuilder := builder.StatefulSet()
+				Expect(stsBuilder.Update(statefulSet)).To(Succeed())
+
+				requiredContainerPorts := []int32{4369, 5672, 15672, 15692}
+				var actualContainerPorts []int32
+
+				container := extractContainer(statefulSet.Spec.Template.Spec.Containers, "rabbitmq")
+				for _, port := range container.Ports {
+					actualContainerPorts = append(actualContainerPorts, port.ContainerPort)
+				}
+
+				Expect(actualContainerPorts).To(ConsistOf(requiredContainerPorts))
+			})
+
+			It("sets required Environment Variables", func() {
+				stsBuilder := builder.StatefulSet()
+				Expect(stsBuilder.Update(statefulSet)).To(Succeed())
+
+				requiredEnvVariables := []corev1.EnvVar{
+					{
+						Name: "MY_POD_NAME",
+						ValueFrom: &corev1.EnvVarSource{
+							FieldRef: &corev1.ObjectFieldSelector{
+								FieldPath:  "metadata.name",
+								APIVersion: "v1",
+							},
+						},
+					},
+					{
+						Name: "MY_POD_NAMESPACE",
+						ValueFrom: &corev1.EnvVarSource{
+							FieldRef: &corev1.ObjectFieldSelector{
+								FieldPath:  "metadata.namespace",
+								APIVersion: "v1",
+							},
+						},
+					},
+					{
+						Name:  "RABBITMQ_ENABLED_PLUGINS_FILE",
+						Value: "/operator/enabled_plugins",
+					},
+					{
+						Name:  "K8S_SERVICE_NAME",
+						Value: instance.ChildResourceName("headless"),
+					},
+					{
+						Name:  "RABBITMQ_USE_LONGNAME",
+						Value: "true",
+					},
+					{
+						Name:  "RABBITMQ_NODENAME",
+						Value: "rabbit@$(MY_POD_NAME).$(K8S_SERVICE_NAME).$(MY_POD_NAMESPACE)",
+					},
+					{
+						Name:  "K8S_HOSTNAME_SUFFIX",
+						Value: ".$(K8S_SERVICE_NAME).$(MY_POD_NAMESPACE)",
+					},
+				}
+
+				container := extractContainer(statefulSet.Spec.Template.Spec.Containers, "rabbitmq")
+				Expect(container.Env).To(ConsistOf(requiredEnvVariables))
+			})
+
+			It("sets the expected volumes", func() {
+				stsBuilder := builder.StatefulSet()
+				Expect(stsBuilder.Update(statefulSet)).To(Succeed())
+
+				Expect(statefulSet.Spec.Template.Spec.Volumes).To(ConsistOf(
+					corev1.Volume{
+						Name: "server-conf",
+						VolumeSource: corev1.VolumeSource{
+							ConfigMap: &corev1.ConfigMapVolumeSource{
+								LocalObjectReference: corev1.LocalObjectReference{
+									Name: instance.ChildResourceName("server-conf"),
+								},
+							},
+						},
+					},
+					corev1.Volume{
+						Name: "plugins-conf",
+						VolumeSource: corev1.VolumeSource{
+							ConfigMap: &corev1.ConfigMapVolumeSource{
+								LocalObjectReference: corev1.LocalObjectReference{
+									Name: instance.ChildResourceName("plugins-conf"),
+								},
+							},
+						},
+					},
+					corev1.Volume{
+						Name: "rabbitmq-confd",
+						VolumeSource: corev1.VolumeSource{
+							Projected: &corev1.ProjectedVolumeSource{
+								Sources: []corev1.VolumeProjection{
+									{
+										Secret: &corev1.SecretProjection{
+											LocalObjectReference: corev1.LocalObjectReference{
+												Name: builder.Instance.ChildResourceName("default-user"),
+											},
+											Items: []corev1.KeyToPath{
+												{
+													Key:  "default_user.conf",
+													Path: "default_user.conf",
+												},
+											},
+										},
+									},
+								},
+							},
+						},
+					},
+					corev1.Volume{
+						Name: "rabbitmq-erlang-cookie",
+						VolumeSource: corev1.VolumeSource{
+							EmptyDir: &corev1.EmptyDirVolumeSource{},
+						},
+					},
+					corev1.Volume{
+						Name: "erlang-cookie-secret",
+						VolumeSource: corev1.VolumeSource{
+							Secret: &corev1.SecretVolumeSource{
+								SecretName: instance.ChildResourceName("erlang-cookie"),
+							},
+						},
+					},
+					corev1.Volume{
+						Name: "rabbitmq-plugins",
+						VolumeSource: corev1.VolumeSource{
+							EmptyDir: &corev1.EmptyDirVolumeSource{},
+						},
+					},
+					corev1.Volume{
+						Name: "pod-info",
+						VolumeSource: corev1.VolumeSource{
+							DownwardAPI: &corev1.DownwardAPIVolumeSource{
+								Items: []corev1.DownwardAPIVolumeFile{
+									{
+										Path: "skipPreStopChecks",
+										FieldRef: &corev1.ObjectFieldSelector{
+											FieldPath: "metadata.labels['skipPreStopChecks']",
+										},
+									},
+								},
+							},
+						},
+					},
+				))
+			})
+
+			It("uses the correct service account", func() {
+				stsBuilder := builder.StatefulSet()
+				Expect(stsBuilder.Update(statefulSet)).To(Succeed())
+
+				Expect(statefulSet.Spec.Template.Spec.ServiceAccountName).To(Equal(instance.ChildResourceName("server")))
+			})
+
+			It("mounts the service account in its pods", func() {
+				stsBuilder := builder.StatefulSet()
+				Expect(stsBuilder.Update(statefulSet)).To(Succeed())
+
+				Expect(*statefulSet.Spec.Template.Spec.AutomountServiceAccountToken).To(BeTrue())
+			})
+
+			It("creates the required SecurityContext", func() {
+				stsBuilder := builder.StatefulSet()
+				Expect(stsBuilder.Update(statefulSet)).To(Succeed())
+
+				rmqGID, rmqUID := int64(999), int64(999)
+
+				expectedPodSecurityContext := &corev1.PodSecurityContext{
+					FSGroup:    &rmqGID,
+					RunAsGroup: &rmqGID,
+					RunAsUser:  &rmqUID,
+				}
+
+				Expect(statefulSet.Spec.Template.Spec.SecurityContext).To(Equal(expectedPodSecurityContext))
+			})
+
+			It("defines a Readiness Probe", func() {
+				stsBuilder := builder.StatefulSet()
+				Expect(stsBuilder.Update(statefulSet)).To(Succeed())
+
+				container := extractContainer(statefulSet.Spec.Template.Spec.Containers, "rabbitmq")
+				TCPProbe := container.ReadinessProbe.TCPSocket
+				Expect(TCPProbe.Port.Type).To(Equal(intstr.String))
+				Expect(TCPProbe.Port.StrVal).To(Equal("amqp"))
+			})
+
+			It("templates the correct InitContainer", func() {
+				stsBuilder := builder.StatefulSet()
+				Expect(stsBuilder.Update(statefulSet)).To(Succeed())
+
+				initContainers := statefulSet.Spec.Template.Spec.InitContainers
+				Expect(initContainers).To(HaveLen(1))
+
+				initContainer := extractContainer(initContainers, "setup-container")
+				Expect(initContainer).To(MatchFields(IgnoreExtras, Fields{
+					"Image": Equal("rabbitmq-image-from-cr"),
+					"SecurityContext": PointTo(MatchFields(IgnoreExtras, Fields{
+						"Capabilities": PointTo(MatchAllFields(Fields{
+							"Drop": ConsistOf([]corev1.Capability{"ALL"}),
+							"Add":  ConsistOf([]corev1.Capability{"CHOWN", "FOWNER"}),
+						})),
+					})),
+					"Command": ConsistOf(
+						"sh", "-c", "cp /tmp/erlang-cookie-secret/.erlang.cookie /var/lib/rabbitmq/.erlang.cookie "+
+							"&& chown 999:999 /var/lib/rabbitmq/.erlang.cookie "+
+							"&& chmod 600 /var/lib/rabbitmq/.erlang.cookie ; "+
+							"cp /tmp/rabbitmq-plugins/enabled_plugins /operator/enabled_plugins "+
+							"&& chown 999:999 /operator/enabled_plugins ; "+
+							"chgrp 999 /var/lib/rabbitmq/mnesia/ ; "+
+							"echo '[default]' > /var/lib/rabbitmq/.rabbitmqadmin.conf "+
+							"&& sed -e 's/default_user/username/' -e 's/default_pass/password/' /tmp/default_user.conf >> /var/lib/rabbitmq/.rabbitmqadmin.conf "+
+							"&& chown 999:999 /var/lib/rabbitmq/.rabbitmqadmin.conf "+
+							"&& chmod 600 /var/lib/rabbitmq/.rabbitmqadmin.conf",
+					),
+					"VolumeMounts": ConsistOf(
+						corev1.VolumeMount{
+							Name:      "plugins-conf",
+							MountPath: "/tmp/rabbitmq-plugins/",
+						},
+						corev1.VolumeMount{
+							Name:      "rabbitmq-erlang-cookie",
+							MountPath: "/var/lib/rabbitmq/",
+						},
+						corev1.VolumeMount{
+							Name:      "erlang-cookie-secret",
+							MountPath: "/tmp/erlang-cookie-secret/",
+						},
+						corev1.VolumeMount{
+							Name:      "rabbitmq-plugins",
+							MountPath: "/operator",
+						},
+						corev1.VolumeMount{
+							Name:      "persistence",
+							MountPath: "/var/lib/rabbitmq/mnesia/",
+						},
+						corev1.VolumeMount{
+							Name:      "rabbitmq-confd",
+							MountPath: "/tmp/default_user.conf",
+							SubPath:   "default_user.conf",
+						},
+					),
+				}))
+			})
+
+			It("sets TerminationGracePeriodSeconds in podTemplate as provided in instance spec", func() {
+				instance.Spec.TerminationGracePeriodSeconds = pointer.Int64Ptr(10)
+				builder = &resource.RabbitmqResourceBuilder{
+					Instance: &instance,
+					Scheme:   scheme,
+				}
+
+				stsBuilder := builder.StatefulSet()
+				Expect(stsBuilder.Update(statefulSet)).To(Succeed())
+
+				gracePeriodSeconds := statefulSet.Spec.Template.Spec.TerminationGracePeriodSeconds
+				Expect(gracePeriodSeconds).To(Equal(pointer.Int64Ptr(10)))
+
+				// TerminationGracePeriodSeconds is used to set commands timeouts in the preStop hook
+				expectedPreStopCommand := []string{"/bin/bash", "-c", "if [ ! -z \"$(cat /etc/pod-info/skipPreStopChecks)\" ]; then exit 0; fi; rabbitmq-upgrade await_online_quorum_plus_one -t 10; rabbitmq-upgrade await_online_synchronized_mirror -t 10; rabbitmq-upgrade drain -t 10"}
+				Expect(statefulSet.Spec.Template.Spec.Containers[0].Lifecycle.PreStop.Exec.Command).To(Equal(expectedPreStopCommand))
+			})
+
+			It("checks mirror and querum queue status in preStop hook", func() {
+				stsBuilder := builder.StatefulSet()
+				Expect(stsBuilder.Update(statefulSet)).To(Succeed())
+
+				expectedPreStopCommand := []string{"/bin/bash", "-c", "if [ ! -z \"$(cat /etc/pod-info/skipPreStopChecks)\" ]; then exit 0; fi; rabbitmq-upgrade await_online_quorum_plus_one -t 604800; rabbitmq-upgrade await_online_synchronized_mirror -t 604800; rabbitmq-upgrade drain -t 604800"}
+
+				Expect(statefulSet.Spec.Template.Spec.Containers[0].Lifecycle.PreStop.Exec.Command).To(Equal(expectedPreStopCommand))
+			})
 		})
 
 		It("updates tolerations", func() {
@@ -351,7 +664,43 @@ var _ = Describe("StatefulSet", func() {
 				To(ConsistOf(newToleration))
 		})
 
-		Context("label inheritance", func() {
+		It("updates the imagePullSecrets list; sets it back to empty list after deleting the configuration", func() {
+			stsBuilder.Instance.Spec.ImagePullSecrets = []corev1.LocalObjectReference{{Name: "my-shiny-new-secret"}}
+			Expect(stsBuilder.Update(statefulSet)).To(Succeed())
+			Expect(statefulSet.Spec.Template.Spec.ImagePullSecrets).To(ConsistOf(corev1.LocalObjectReference{Name: "my-shiny-new-secret"}))
+
+			stsBuilder.Instance.Spec.ImagePullSecrets = nil
+			Expect(stsBuilder.Update(statefulSet)).To(Succeed())
+			Expect(statefulSet.Spec.Template.Spec.ImagePullSecrets).To(BeEmpty())
+		})
+
+		It("uses the instance ImagePullSecrets and image reference when provided", func() {
+			instance.Spec.Image = "my-private-repo/rabbitmq:latest"
+			instance.Spec.ImagePullSecrets = []corev1.LocalObjectReference{{Name: "my-great-secret"}}
+			builder = &resource.RabbitmqResourceBuilder{
+				Instance: &instance,
+				Scheme:   scheme,
+			}
+
+			stsBuilder := builder.StatefulSet()
+			Expect(stsBuilder.Update(statefulSet)).To(Succeed())
+			container := extractContainer(statefulSet.Spec.Template.Spec.Containers, "rabbitmq")
+			Expect(container.Image).To(Equal("my-private-repo/rabbitmq:latest"))
+			Expect(statefulSet.Spec.Template.Spec.ImagePullSecrets).To(ConsistOf(corev1.LocalObjectReference{Name: "my-great-secret"}))
+		})
+
+		It("sets the replica count of the StatefulSet to the instance value", func() {
+			instance.Spec.Replicas = pointer.Int32Ptr(3)
+			builder = &resource.RabbitmqResourceBuilder{
+				Instance: &instance,
+				Scheme:   scheme,
+			}
+			stsBuilder := builder.StatefulSet()
+			Expect(stsBuilder.Update(statefulSet)).To(Succeed())
+			Expect(*statefulSet.Spec.Replicas).To(Equal(int32(3)))
+		})
+
+		Context("Label inheritance", func() {
 			BeforeEach(func() {
 				instance = generateRabbitmqCluster()
 				instance.Namespace = "foo-namespace"
@@ -450,7 +799,7 @@ var _ = Describe("StatefulSet", func() {
 			})
 		})
 
-		Context("annotations", func() {
+		Context("Annotations", func() {
 			Context("default annotations", func() {
 
 				BeforeEach(func() {
@@ -675,67 +1024,7 @@ var _ = Describe("StatefulSet", func() {
 			})
 		})
 
-		It("updates the imagePullSecrets list; sets it back to empty list after deleting the configuration", func() {
-			stsBuilder.Instance.Spec.ImagePullSecrets = []corev1.LocalObjectReference{{Name: "my-shiny-new-secret"}}
-			Expect(stsBuilder.Update(statefulSet)).To(Succeed())
-			Expect(statefulSet.Spec.Template.Spec.ImagePullSecrets).To(ConsistOf(corev1.LocalObjectReference{Name: "my-shiny-new-secret"}))
-
-			stsBuilder.Instance.Spec.ImagePullSecrets = nil
-			Expect(stsBuilder.Update(statefulSet)).To(Succeed())
-			Expect(statefulSet.Spec.Template.Spec.ImagePullSecrets).To(BeEmpty())
-		})
-
-		It("sets replicas", func() {
-			stsBuilder := builder.StatefulSet()
-			Expect(stsBuilder.Update(statefulSet)).To(Succeed())
-
-			Expect(*statefulSet.Spec.Replicas).To(Equal(int32(1)))
-		})
-
-		It("sets a TopologySpreadConstraint", func() {
-			stsBuilder := builder.StatefulSet()
-			Expect(stsBuilder.Update(statefulSet)).To(Succeed())
-
-			Expect(statefulSet.Spec.Template.Spec.TopologySpreadConstraints).To(ConsistOf(
-				corev1.TopologySpreadConstraint{
-					MaxSkew:           1,
-					TopologyKey:       "topology.kubernetes.io/zone",
-					WhenUnsatisfiable: corev1.ScheduleAnyway,
-					LabelSelector: &metav1.LabelSelector{
-						MatchLabels: map[string]string{
-							"app.kubernetes.io/name": instance.Name,
-						},
-					},
-				}))
-		})
-
-		It("has resources requirements on the init container", func() {
-			stsBuilder := builder.StatefulSet()
-			Expect(stsBuilder.Update(statefulSet)).To(Succeed())
-
-			resources := statefulSet.Spec.Template.Spec.InitContainers[0].Resources
-			Expect(resources.Requests["cpu"]).To(Equal(k8sresource.MustParse("100m")))
-			Expect(resources.Requests["memory"]).To(Equal(k8sresource.MustParse("500Mi")))
-			Expect(resources.Limits["cpu"]).To(Equal(k8sresource.MustParse("100m")))
-			Expect(resources.Limits["memory"]).To(Equal(k8sresource.MustParse("500Mi")))
-		})
-
-		It("exposes required Container Ports", func() {
-			stsBuilder := builder.StatefulSet()
-			Expect(stsBuilder.Update(statefulSet)).To(Succeed())
-
-			requiredContainerPorts := []int32{4369, 5672, 15672, 15692}
-			var actualContainerPorts []int32
-
-			container := extractContainer(statefulSet.Spec.Template.Spec.Containers, "rabbitmq")
-			for _, port := range container.Ports {
-				actualContainerPorts = append(actualContainerPorts, port.ContainerPort)
-			}
-
-			Expect(actualContainerPorts).To(ConsistOf(requiredContainerPorts))
-		})
-
-		DescribeTable("plugins exposing ports",
+		DescribeTable("Plugins exposing ports",
 			func(plugin, containerPortName string, port int) {
 				instance.Spec.Rabbitmq.AdditionalPlugins = []rabbitmqv1beta1.Plugin{rabbitmqv1beta1.Plugin(plugin)}
 				Expect(stsBuilder.Update(statefulSet)).To(Succeed())
@@ -752,55 +1041,6 @@ var _ = Describe("StatefulSet", func() {
 			Entry("STOMP", "rabbitmq_stomp", "stomp", 61613),
 			Entry("STOMP-over-WebSockets", "rabbitmq_web_stomp", "web-stomp", 15674),
 		)
-
-		It("uses required Environment Variables", func() {
-			stsBuilder := builder.StatefulSet()
-			Expect(stsBuilder.Update(statefulSet)).To(Succeed())
-
-			requiredEnvVariables := []corev1.EnvVar{
-				{
-					Name: "MY_POD_NAME",
-					ValueFrom: &corev1.EnvVarSource{
-						FieldRef: &corev1.ObjectFieldSelector{
-							FieldPath:  "metadata.name",
-							APIVersion: "v1",
-						},
-					},
-				},
-				{
-					Name: "MY_POD_NAMESPACE",
-					ValueFrom: &corev1.EnvVarSource{
-						FieldRef: &corev1.ObjectFieldSelector{
-							FieldPath:  "metadata.namespace",
-							APIVersion: "v1",
-						},
-					},
-				},
-				{
-					Name:  "RABBITMQ_ENABLED_PLUGINS_FILE",
-					Value: "/operator/enabled_plugins",
-				},
-				{
-					Name:  "K8S_SERVICE_NAME",
-					Value: instance.ChildResourceName("headless"),
-				},
-				{
-					Name:  "RABBITMQ_USE_LONGNAME",
-					Value: "true",
-				},
-				{
-					Name:  "RABBITMQ_NODENAME",
-					Value: "rabbit@$(MY_POD_NAME).$(K8S_SERVICE_NAME).$(MY_POD_NAMESPACE)",
-				},
-				{
-					Name:  "K8S_HOSTNAME_SUFFIX",
-					Value: ".$(K8S_SERVICE_NAME).$(MY_POD_NAMESPACE)",
-				},
-			}
-
-			container := extractContainer(statefulSet.Spec.Template.Spec.Containers, "rabbitmq")
-			Expect(container.Env).To(ConsistOf(requiredEnvVariables))
-		})
 
 		Context("Rabbitmq container volume mounts", func() {
 			DescribeTable("Volume mounts depending on spec configuration",
@@ -839,216 +1079,7 @@ var _ = Describe("StatefulSet", func() {
 			)
 		})
 
-		It("defines the expected volumes", func() {
-			stsBuilder := builder.StatefulSet()
-			Expect(stsBuilder.Update(statefulSet)).To(Succeed())
-
-			Expect(statefulSet.Spec.Template.Spec.Volumes).To(ConsistOf(
-				corev1.Volume{
-					Name: "server-conf",
-					VolumeSource: corev1.VolumeSource{
-						ConfigMap: &corev1.ConfigMapVolumeSource{
-							LocalObjectReference: corev1.LocalObjectReference{
-								Name: instance.ChildResourceName("server-conf"),
-							},
-						},
-					},
-				},
-				corev1.Volume{
-					Name: "plugins-conf",
-					VolumeSource: corev1.VolumeSource{
-						ConfigMap: &corev1.ConfigMapVolumeSource{
-							LocalObjectReference: corev1.LocalObjectReference{
-								Name: instance.ChildResourceName("plugins-conf"),
-							},
-						},
-					},
-				},
-				corev1.Volume{
-					Name: "rabbitmq-confd",
-					VolumeSource: corev1.VolumeSource{
-						Projected: &corev1.ProjectedVolumeSource{
-							Sources: []corev1.VolumeProjection{
-								{
-									Secret: &corev1.SecretProjection{
-										LocalObjectReference: corev1.LocalObjectReference{
-											Name: builder.Instance.ChildResourceName("default-user"),
-										},
-										Items: []corev1.KeyToPath{
-											{
-												Key:  "default_user.conf",
-												Path: "default_user.conf",
-											},
-										},
-									},
-								},
-							},
-						},
-					},
-				},
-				corev1.Volume{
-					Name: "rabbitmq-erlang-cookie",
-					VolumeSource: corev1.VolumeSource{
-						EmptyDir: &corev1.EmptyDirVolumeSource{},
-					},
-				},
-				corev1.Volume{
-					Name: "erlang-cookie-secret",
-					VolumeSource: corev1.VolumeSource{
-						Secret: &corev1.SecretVolumeSource{
-							SecretName: instance.ChildResourceName("erlang-cookie"),
-						},
-					},
-				},
-				corev1.Volume{
-					Name: "rabbitmq-plugins",
-					VolumeSource: corev1.VolumeSource{
-						EmptyDir: &corev1.EmptyDirVolumeSource{},
-					},
-				},
-				corev1.Volume{
-					Name: "pod-info",
-					VolumeSource: corev1.VolumeSource{
-						DownwardAPI: &corev1.DownwardAPIVolumeSource{
-							Items: []corev1.DownwardAPIVolumeFile{
-								{
-									Path: "skipPreStopChecks",
-									FieldRef: &corev1.ObjectFieldSelector{
-										FieldPath: "metadata.labels['skipPreStopChecks']",
-									},
-								},
-							},
-						},
-					},
-				},
-			))
-		})
-
-		It("uses the correct service account", func() {
-			stsBuilder := builder.StatefulSet()
-			Expect(stsBuilder.Update(statefulSet)).To(Succeed())
-
-			Expect(statefulSet.Spec.Template.Spec.ServiceAccountName).To(Equal(instance.ChildResourceName("server")))
-		})
-
-		It("mounts the service account in its pods", func() {
-			stsBuilder := builder.StatefulSet()
-			Expect(stsBuilder.Update(statefulSet)).To(Succeed())
-
-			Expect(*statefulSet.Spec.Template.Spec.AutomountServiceAccountToken).To(BeTrue())
-		})
-
-		It("creates the required SecurityContext", func() {
-			stsBuilder := builder.StatefulSet()
-			Expect(stsBuilder.Update(statefulSet)).To(Succeed())
-
-			rmqGID, rmqUID := int64(999), int64(999)
-
-			expectedPodSecurityContext := &corev1.PodSecurityContext{
-				FSGroup:    &rmqGID,
-				RunAsGroup: &rmqGID,
-				RunAsUser:  &rmqUID,
-			}
-
-			Expect(statefulSet.Spec.Template.Spec.SecurityContext).To(Equal(expectedPodSecurityContext))
-		})
-
-		It("defines a Readiness Probe", func() {
-			stsBuilder := builder.StatefulSet()
-			Expect(stsBuilder.Update(statefulSet)).To(Succeed())
-
-			container := extractContainer(statefulSet.Spec.Template.Spec.Containers, "rabbitmq")
-			TCPProbe := container.ReadinessProbe.TCPSocket
-			Expect(TCPProbe.Port.Type).To(Equal(intstr.String))
-			Expect(TCPProbe.Port.StrVal).To(Equal("amqp"))
-		})
-
-		It("templates the correct InitContainer", func() {
-			stsBuilder := builder.StatefulSet()
-			Expect(stsBuilder.Update(statefulSet)).To(Succeed())
-
-			initContainers := statefulSet.Spec.Template.Spec.InitContainers
-			Expect(initContainers).To(HaveLen(1))
-
-			initContainer := extractContainer(initContainers, "setup-container")
-			Expect(initContainer).To(MatchFields(IgnoreExtras, Fields{
-				"Image": Equal("rabbitmq-image-from-cr"),
-				"SecurityContext": PointTo(MatchFields(IgnoreExtras, Fields{
-					"Capabilities": PointTo(MatchAllFields(Fields{
-						"Drop": ConsistOf([]corev1.Capability{"ALL"}),
-						"Add":  ConsistOf([]corev1.Capability{"CHOWN", "FOWNER"}),
-					})),
-				})),
-				"Command": ConsistOf(
-					"sh", "-c", "cp /tmp/erlang-cookie-secret/.erlang.cookie /var/lib/rabbitmq/.erlang.cookie "+
-						"&& chown 999:999 /var/lib/rabbitmq/.erlang.cookie "+
-						"&& chmod 600 /var/lib/rabbitmq/.erlang.cookie ; "+
-						"cp /tmp/rabbitmq-plugins/enabled_plugins /operator/enabled_plugins "+
-						"&& chown 999:999 /operator/enabled_plugins ; "+
-						"chgrp 999 /var/lib/rabbitmq/mnesia/ ; "+
-						"echo '[default]' > /var/lib/rabbitmq/.rabbitmqadmin.conf "+
-						"&& sed -e 's/default_user/username/' -e 's/default_pass/password/' /tmp/default_user.conf >> /var/lib/rabbitmq/.rabbitmqadmin.conf "+
-						"&& chown 999:999 /var/lib/rabbitmq/.rabbitmqadmin.conf "+
-						"&& chmod 600 /var/lib/rabbitmq/.rabbitmqadmin.conf",
-				),
-				"VolumeMounts": ConsistOf(
-					corev1.VolumeMount{
-						Name:      "plugins-conf",
-						MountPath: "/tmp/rabbitmq-plugins/",
-					},
-					corev1.VolumeMount{
-						Name:      "rabbitmq-erlang-cookie",
-						MountPath: "/var/lib/rabbitmq/",
-					},
-					corev1.VolumeMount{
-						Name:      "erlang-cookie-secret",
-						MountPath: "/tmp/erlang-cookie-secret/",
-					},
-					corev1.VolumeMount{
-						Name:      "rabbitmq-plugins",
-						MountPath: "/operator",
-					},
-					corev1.VolumeMount{
-						Name:      "persistence",
-						MountPath: "/var/lib/rabbitmq/mnesia/",
-					},
-					corev1.VolumeMount{
-						Name:      "rabbitmq-confd",
-						MountPath: "/tmp/default_user.conf",
-						SubPath:   "default_user.conf",
-					},
-				),
-			}))
-		})
-
-		It("sets TerminationGracePeriodSeconds in podTemplate as provided in instance spec", func() {
-			instance.Spec.TerminationGracePeriodSeconds = pointer.Int64Ptr(10)
-			builder = &resource.RabbitmqResourceBuilder{
-				Instance: &instance,
-				Scheme:   scheme,
-			}
-
-			stsBuilder := builder.StatefulSet()
-			Expect(stsBuilder.Update(statefulSet)).To(Succeed())
-
-			gracePeriodSeconds := statefulSet.Spec.Template.Spec.TerminationGracePeriodSeconds
-			Expect(gracePeriodSeconds).To(Equal(pointer.Int64Ptr(10)))
-
-			// TerminationGracePeriodSeconds is used to set commands timeouts in the preStop hook
-			expectedPreStopCommand := []string{"/bin/bash", "-c", "if [ ! -z \"$(cat /etc/pod-info/skipPreStopChecks)\" ]; then exit 0; fi; rabbitmq-upgrade await_online_quorum_plus_one -t 10; rabbitmq-upgrade await_online_synchronized_mirror -t 10; rabbitmq-upgrade drain -t 10"}
-			Expect(statefulSet.Spec.Template.Spec.Containers[0].Lifecycle.PreStop.Exec.Command).To(Equal(expectedPreStopCommand))
-		})
-
-		It("checks mirror and querum queue status in preStop hook", func() {
-			stsBuilder := builder.StatefulSet()
-			Expect(stsBuilder.Update(statefulSet)).To(Succeed())
-
-			expectedPreStopCommand := []string{"/bin/bash", "-c", "if [ ! -z \"$(cat /etc/pod-info/skipPreStopChecks)\" ]; then exit 0; fi; rabbitmq-upgrade await_online_quorum_plus_one -t 604800; rabbitmq-upgrade await_online_synchronized_mirror -t 604800; rabbitmq-upgrade drain -t 604800"}
-
-			Expect(statefulSet.Spec.Template.Spec.Containers[0].Lifecycle.PreStop.Exec.Command).To(Equal(expectedPreStopCommand))
-		})
-
-		Context("resources requirements", func() {
+		Context("Resources requirements", func() {
 			It("sets StatefulSet resource requirements", func() {
 				instance.Spec.Resources = &corev1.ResourceRequirements{
 					Requests: corev1.ResourceList{
@@ -1100,35 +1131,7 @@ var _ = Describe("StatefulSet", func() {
 			})
 		})
 
-		When("configures private image", func() {
-			It("uses the instance ImagePullSecrets and image reference when provided", func() {
-				instance.Spec.Image = "my-private-repo/rabbitmq:latest"
-				instance.Spec.ImagePullSecrets = []corev1.LocalObjectReference{{Name: "my-great-secret"}}
-				builder = &resource.RabbitmqResourceBuilder{
-					Instance: &instance,
-					Scheme:   scheme,
-				}
-
-				stsBuilder := builder.StatefulSet()
-				Expect(stsBuilder.Update(statefulSet)).To(Succeed())
-				container := extractContainer(statefulSet.Spec.Template.Spec.Containers, "rabbitmq")
-				Expect(container.Image).To(Equal("my-private-repo/rabbitmq:latest"))
-				Expect(statefulSet.Spec.Template.Spec.ImagePullSecrets).To(ConsistOf(corev1.LocalObjectReference{Name: "my-great-secret"}))
-			})
-		})
-
-		It("sets the replica count of the StatefulSet to the instance value", func() {
-			instance.Spec.Replicas = pointer.Int32Ptr(3)
-			builder = &resource.RabbitmqResourceBuilder{
-				Instance: &instance,
-				Scheme:   scheme,
-			}
-			stsBuilder := builder.StatefulSet()
-			Expect(stsBuilder.Update(statefulSet)).To(Succeed())
-			Expect(*statefulSet.Spec.Replicas).To(Equal(int32(3)))
-		})
-
-		When("stateful set override are provided", func() {
+		Context("Override", func() {
 			It("overrides statefulSet.ObjectMeta.Annotations", func() {
 				instance.Annotations = map[string]string{
 					"key1":    "value1",
