@@ -975,15 +975,7 @@ var _ = Describe("StatefulSet", func() {
 			stsBuilder := builder.StatefulSet()
 			Expect(stsBuilder.Update(statefulSet)).To(Succeed())
 
-			rmqGID, rmqUID := int64(999), int64(999)
-
-			expectedPodSecurityContext := &corev1.PodSecurityContext{
-				FSGroup:    &rmqGID,
-				RunAsGroup: &rmqGID,
-				RunAsUser:  &rmqUID,
-			}
-
-			Expect(statefulSet.Spec.Template.Spec.SecurityContext).To(Equal(expectedPodSecurityContext))
+			Expect(statefulSet.Spec.Template.Spec.SecurityContext).To(BeNil())
 		})
 
 		It("defines a Readiness Probe", func() {
@@ -1005,13 +997,8 @@ var _ = Describe("StatefulSet", func() {
 
 			initContainer := extractContainer(initContainers, "setup-container")
 			Expect(initContainer).To(MatchFields(IgnoreExtras, Fields{
-				"Image": Equal("rabbitmq-image-from-cr"),
-				"SecurityContext": PointTo(MatchFields(IgnoreExtras, Fields{
-					"Capabilities": PointTo(MatchAllFields(Fields{
-						"Drop": ConsistOf([]corev1.Capability{"ALL"}),
-						"Add":  ConsistOf([]corev1.Capability{"CHOWN", "FOWNER"}),
-					})),
-				})),
+				"Image":           Equal("rabbitmq-image-from-cr"),
+				"SecurityContext": BeNil(),
 				"Command": ConsistOf(
 					"sh", "-c", "cp /tmp/erlang-cookie-secret/.erlang.cookie /var/lib/rabbitmq/.erlang.cookie "+
 						"&& chown 999:999 /var/lib/rabbitmq/.erlang.cookie "+

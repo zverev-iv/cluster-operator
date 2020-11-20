@@ -268,8 +268,6 @@ func (builder *StatefulSetBuilder) podTemplateSpec(previousPodAnnotations map[st
 	memoryRequest := k8sresource.MustParse(initContainerMemory)
 
 	automountServiceAccountToken := true
-	rabbitmqGID := int64(999)
-	rabbitmqUID := int64(999)
 
 	volumes := []corev1.Volume{
 		{
@@ -558,11 +556,6 @@ func (builder *StatefulSetBuilder) podTemplateSpec(previousPodAnnotations map[st
 					},
 				},
 			},
-			SecurityContext: &corev1.PodSecurityContext{
-				FSGroup:    &rabbitmqGID,
-				RunAsGroup: &rabbitmqGID,
-				RunAsUser:  &rabbitmqUID,
-			},
 			ImagePullSecrets:              builder.Instance.Spec.ImagePullSecrets,
 			TerminationGracePeriodSeconds: builder.Instance.Spec.TerminationGracePeriodSeconds,
 			ServiceAccountName:            builder.Instance.ChildResourceName(serviceAccountName),
@@ -573,13 +566,6 @@ func (builder *StatefulSetBuilder) podTemplateSpec(previousPodAnnotations map[st
 				{
 					Name:  "setup-container",
 					Image: builder.Instance.Spec.Image,
-					SecurityContext: &corev1.SecurityContext{
-						RunAsUser: pointer.Int64Ptr(0),
-						Capabilities: &corev1.Capabilities{
-							Drop: []corev1.Capability{"ALL"},
-							Add:  []corev1.Capability{"CHOWN", "FOWNER"},
-						},
-					},
 					Command: []string{
 						"sh", "-c", "cp /tmp/erlang-cookie-secret/.erlang.cookie /var/lib/rabbitmq/.erlang.cookie " +
 							"&& chown 999:999 /var/lib/rabbitmq/.erlang.cookie " +
