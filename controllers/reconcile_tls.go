@@ -15,11 +15,13 @@ func (r *RabbitmqClusterReconciler) reconcileTLS(ctx context.Context, rabbitmqCl
 		err := errors.NewBadRequest("TLS must be enabled if disableNonTLSListeners is set to true")
 		r.Recorder.Event(rabbitmqCluster, corev1.EventTypeWarning, "TLSError", err.Error())
 		r.Log.Error(err, "Error setting up TLS", "namespace", rabbitmqCluster.Namespace, "name", rabbitmqCluster.Name)
+		r.setReconcileSuccessFalse(rabbitmqCluster, err, ctx)
 		return err
 	}
 
 	if rabbitmqCluster.TLSEnabled() {
 		if err := r.checkTLSSecrets(ctx, rabbitmqCluster); err != nil {
+			r.setReconcileSuccessFalse(rabbitmqCluster, err, ctx)
 			return err
 		}
 	}

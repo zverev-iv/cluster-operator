@@ -106,10 +106,6 @@ func (r *RabbitmqClusterReconciler) Reconcile(req ctrl.Request) (ctrl.Result, er
 		return ctrl.Result{}, err
 	}
 
-	if err := r.reconcileTLS(ctx, rabbitmqCluster); err != nil {
-		return ctrl.Result{}, err
-	}
-
 	childResources, err := r.getChildResources(ctx, *rabbitmqCluster)
 	if err != nil {
 		return ctrl.Result{}, err
@@ -123,6 +119,10 @@ func (r *RabbitmqClusterReconciler) Reconcile(req ctrl.Request) (ctrl.Result, er
 		if err = r.Status().Update(ctx, rabbitmqCluster); err != nil {
 			return ctrl.Result{}, err
 		}
+	}
+
+	if err := r.reconcileTLS(ctx, rabbitmqCluster); err != nil {
+		return ctrl.Result{}, err
 	}
 
 	sts, err := r.statefulSet(ctx, rabbitmqCluster)
@@ -172,12 +172,7 @@ func (r *RabbitmqClusterReconciler) Reconcile(req ctrl.Request) (ctrl.Result, er
 		})
 		r.logAndRecordOperationResult(rabbitmqCluster, resource, operationResult, err)
 		if err != nil {
-			rabbitmqCluster.Status.SetCondition(status.ReconcileSuccess, corev1.ConditionFalse, "Error", err.Error())
-			if writerErr := r.Status().Update(ctx, rabbitmqCluster); writerErr != nil {
-				r.Log.Error(writerErr, "Error trying to Update ReconcileSuccess condition state",
-					"namespace", rabbitmqCluster.Namespace,
-					"name", rabbitmqCluster.Name)
-			}
+			r.setReconcileSuccessFalse(rabbitmqCluster, err, ctx)
 			return ctrl.Result{}, err
 		}
 
@@ -222,6 +217,15 @@ func (r *RabbitmqClusterReconciler) Reconcile(req ctrl.Request) (ctrl.Result, er
 		"name", rabbitmqCluster.Name)
 
 	return ctrl.Result{}, nil
+}
+
+func (r *RabbitmqClusterReconciler) setReconcileSuccessFalse(rabbitmqCluster *rabbitmqv1beta1.RabbitmqCluster, err error, ctx context.Context) {
+	rabbitmqCluster.Status.SetCondition(status.ReconcileSuccess, corev1.ConditionFalse, "Error", err.Error())
+	if writerErr := r.Status().Update(ctx, rabbitmqCluster); writerErr != nil {
+		r.Log.Error(writerErr, "Error trying to Update ReconcileSuccess condition state",
+			"namespace", rabbitmqCluster.Namespace,
+			"name", rabbitmqCluster.Name)
+	}
 }
 
 // logAndRecordOperationResult - helper function to log and record events with message and error
